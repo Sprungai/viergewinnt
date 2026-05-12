@@ -50,24 +50,24 @@
 		<!-- Board Panel -->
 		<div class="bg-surface-container-low p-4 md:p-6 rounded-3xl glass-panel relative">
 			<div class="grid grid-cols-7 gap-3 md:gap-4">
-				{#each Array(game.rows) as _, row}
-					{#each Array(game.cols) as _, col}
+				{#each game.board as row, rowIndex (rowIndex)}
+					{#each row as cell, colIndex (colIndex)}
 						<!-- svelte-ignore a11y_click_events_have_key_events -->
 						<!-- svelte-ignore a11y_no_static_element_interactions -->
 						<div 
 							class="w-10 h-10 md:w-14 md:h-14 rounded-full bg-surface-container-lowest relative cursor-pointer overflow-hidden shadow-inner group"
-							onclick={() => handleColumnClick(col)}
+							onclick={() => handleColumnClick(colIndex)}
 						>
 							<!-- Hover indicator column -->
 							<div class="absolute inset-0 bg-surface-variant/20 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none"></div>
 
 							<!-- Token -->
-							{#if game.board[row][col] === 1}
+							{#if cell === 1}
 								<div 
 									in:scale={{ duration: 400, easing: cubicOut, start: 0.5 }}
 									class="absolute inset-1 rounded-full bg-[radial-gradient(circle_at_30%_30%,theme(colors.primary),theme(colors.primary-container))] neon-shadow-primary"
 								></div>
-							{:else if game.board[row][col] === 2}
+							{:else if cell === 2}
 								<div 
 									in:scale={{ duration: 400, easing: cubicOut, start: 0.5 }}
 									class="absolute inset-1 rounded-full bg-[radial-gradient(circle_at_30%_30%,theme(colors.secondary),theme(colors.secondary-container))] neon-shadow-secondary"
@@ -75,7 +75,7 @@
 							{/if}
 
 							<!-- Winning Highlight -->
-							{#if game.winningCells.some(c => c.row === row && c.col === col)}
+							{#if game.winningCells.some(c => c.row === rowIndex && c.col === colIndex)}
 								<div class="absolute inset-0 bg-white/30 rounded-full animate-pulse pointer-events-none"></div>
 							{/if}
 						</div>
@@ -129,7 +129,15 @@
 	{/if}
 	
 	<!-- Footer control -->
-	<div class="z-10 mt-12">
+	<div class="z-10 mt-12 flex items-center gap-6">
+		<button 
+			onclick={() => game.toggleAi()}
+			class="font-display text-sm font-bold uppercase tracking-widest transition-all duration-300 ghost-border px-6 py-2 rounded-full cursor-pointer
+			{game.isAiEnabled ? 'text-secondary bg-surface-container-highest ring-2 ring-secondary/30' : 'text-on-surface-variant bg-surface-container-highest'}"
+		>
+			AI Mode: {game.isAiEnabled ? 'ON' : 'OFF'}
+		</button>
+
 		<button 
 			onclick={() => game.reset()}
 			class="font-display text-sm font-bold uppercase tracking-widest text-on-surface-variant hover:text-primary transition-colors ghost-border px-6 py-2 rounded-full bg-surface-container-highest cursor-pointer"
@@ -137,4 +145,16 @@
 			Reset Board
 		</button>
 	</div>
+
+	<!-- AI Thinking Indicator -->
+	{#if game.isAiThinking}
+		<div 
+			in:fade={{ duration: 200 }}
+			out:fade={{ duration: 200 }}
+			class="fixed bottom-12 left-1/2 -translate-x-1/2 z-20 flex items-center gap-3 px-6 py-3 rounded-full bg-surface-container-high shadow-ambient glass-panel"
+		>
+			<div class="w-2 h-2 rounded-full bg-secondary animate-pulse"></div>
+			<span class="font-display text-xs font-bold uppercase tracking-[0.2em] text-secondary">AI Calculating...</span>
+		</div>
+	{/if}
 </main>
