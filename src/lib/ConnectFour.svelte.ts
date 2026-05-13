@@ -1,5 +1,24 @@
+import { SvelteDate } from 'svelte/reactivity';
+
 export type Player = 1 | 2;
 export type Cell = Player | null;
+export type Difficulty = 'Beginner' | 'Intermediate' | 'Expert';
+export type GameState = 'menu' | 'playing' | 'settings' | 'leaderboard' | 'history';
+export type GameMode = 'single' | 'local' | 'online';
+
+export interface Replay {
+	id: string;
+	date: string;
+	mode: GameMode;
+	winner: Player | 'draw';
+	moves: number[];
+}
+
+export interface Stats {
+	player1Wins: number;
+	player2Wins: number;
+	draws: number;
+}
 
 export class ConnectFourGame {
 	rows = 6;
@@ -10,8 +29,72 @@ export class ConnectFourGame {
 	winner = $state<Player | 'draw' | null>(null);
 	winningCells = $state<{ row: number; col: number }[]>([]);
 	
+	gameState = $state<GameState>('menu');
+	gameMode = $state<GameMode>('local');
 	isAiEnabled = $state(false);
 	isAiThinking = $state(false);
+	aiDifficulty = $state<Difficulty>('Beginner');
+	isReplaying = $state(false);
+
+	// Persistence
+	currentMoves: number[] = [];
+	savedReplays = $state<Replay[]>([]);
+	stats = $state<Stats>({ player1Wins: 0, player2Wins: 0, draws: 0 });
+
+	constructor() {
+		this.loadData();
+	}
+
+	private loadData() {
+		if (typeof localStorage !== 'undefined') {
+			const replays = localStorage.getItem('neon_replays');
+			if (replays) this.savedReplays = JSON.parse(replays);
+			
+			const stats = localStorage.getItem('neon_stats');
+			if (stats) this.stats = JSON.parse(stats);
+		}
+	}
+
+	private saveData() {
+		if (typeof localStorage !== 'undefined') {
+			localStorage.setItem('neon_replays', JSON.stringify(this.savedReplays));
+			localStorage.setItem('neon_stats', JSON.stringify(this.stats));
+		}
+	}
+
+	startGame(mode: GameMode) {
+		this.gameMode = mode;
+		this.isAiEnabled = mode === 'single';
+		this.gameState = 'playing';
+		this.currentMoves = [];
+		this.reset();
+	}
+
+	goToMenu() {
+		this.gameState = 'menu';
+	}
+
+	showLeaderboard() {
+		this.gameState = 'leaderboard';
+	}
+
+	showHistory() {
+		this.gameState = 'history';
+	}
+
+	async playReplay(replay: Replay) {
+		this.gameState = 'playing';
+		this.isReplaying = true;
+		this.reset();
+		
+		for (const col of replay.moves) {
+			await new Promise(resolve => setTimeout(resolve, 800));
+			this.executeMove(col);
+			if (this.winner) break;
+		}
+		
+		this.isReplaying = false;
+	}
 
 	createEmptyBoard(): Cell[][] {
 		return Array(this.rows)
@@ -46,16 +129,20 @@ export class ConnectFourGame {
 		return success;
 	}
 
-	private executeMove(col: number): boolean {
-		for (let row = this.rows - 1; row >= 0; row--) {
-			if (this.board[row][col] === null) {
-				this.board[row][col] = this.currentPlayer;
+	private executeMove(col: number) {
+		for (let r = this.rows - 1; r >= 0; r--) {
+			if (this.board[r][col] === null) {
+				this.board[r][col] = this.currentPlayer;
+				this.currentMoves.push(col);
 				
-				if (this.checkWin(row, col, this.board)) {
+				const win = this.checkWin(r, col, this.board);
+				if (win) {
 					this.winner = this.currentPlayer;
-					// Winning cells are set inside checkWin for the real board
-				} else if (this.checkDraw(this.board)) {
+					this.winningCells = win;
+					this.saveGameResult();
+				} else if (this.board.every(row => row.every(cell => cell !== null))) {
 					this.winner = 'draw';
+					this.saveGameResult();
 				} else {
 					this.currentPlayer = this.currentPlayer === 1 ? 2 : 1;
 				}
@@ -63,6 +150,39 @@ export class ConnectFourGame {
 			}
 		}
 		return false;
+	}
+
+	private saveGameResult() {
+		if (this.winner) {
+			// Update Stats
+			if (this.winner === 1) this.stats.player1Wins++;
+			else if (this.winner === 2) this.stats.player2Wins++;
+			else this.stats.draws++;
+
+			// Save Replay
+			const replay: Replay = {
+				id: Math.random().toString(36).substr(2, 9),
+				date: new SvelteDate().toLocaleString(),
+				mode: this.gameMode,
+				winner: this.winner,
+				moves: [...this.currentMoves]
+			};
+
+			this.savedReplays.unshift(replay);
+			if (this.savedReplays.length > 20) this.savedReplays.pop(); // Keep last 20
+
+			this.saveData();
+		}
+	}
+
+	deleteReplay(id: string) {
+		this.savedReplays = this.savedReplays.filter(r => r.id !== id);
+		this.saveData();
+	}
+
+	clearStats() {
+		this.stats = { player1Wins: 0, player2Wins: 0, draws: 0 };
+		this.saveData();
 	}
 
 	private async triggerAiMove() {
@@ -79,6 +199,25 @@ export class ConnectFourGame {
 	}
 
 	private getBestMove(): number {
+		const moves = this.getValidMoves(this.board);
+		if (moves.length === 0) return -1;
+
+		console.log(`[AI] Thinking with difficulty: ${this.aiDifficulty}`);
+
+		// Difficulty adjustment
+		if (this.aiDifficulty === 'Beginner') {
+			// Beginner: 100% Random.
+			return moves[Math.floor(Math.random() * moves.length)];
+		} else if (this.aiDifficulty === 'Intermediate') {
+			// Intermediate: Depth 1 (Immediate wins/blocks only)
+			return this.calculateBestMoveWithDepth(1);
+		} else {
+			// Expert: Depth 7 (Strong strategy)
+			return this.calculateBestMoveWithDepth(7);
+		}
+	}
+
+	private calculateBestMoveWithDepth(depth: number): number {
 		let bestScore = -Infinity;
 		const moves = this.getValidMoves(this.board);
 		let bestMove = moves[Math.floor(Math.random() * moves.length)];
@@ -86,7 +225,7 @@ export class ConnectFourGame {
 		for (const col of moves) {
 			const tempBoard = this.cloneBoard(this.board);
 			this.makeTempMove(tempBoard, col, 2);
-			const score = this.minimax(tempBoard, 6, -Infinity, Infinity, false);
+			const score = this.minimax(tempBoard, depth, -Infinity, Infinity, false);
 			if (score > bestScore) {
 				bestScore = score;
 				bestMove = col;
@@ -220,7 +359,7 @@ export class ConnectFourGame {
 		return board[0].every(cell => cell !== null);
 	}
 
-	private checkWin(row: number, col: number, board: Cell[][]) {
+	private checkWin(row: number, col: number, board: Cell[][]): { row: number; col: number }[] | null {
 		const directions = [
 			[[0, 1], [0, -1]], // horizontal
 			[[1, 0], [-1, 0]], // vertical
@@ -229,7 +368,7 @@ export class ConnectFourGame {
 		];
 
 		const player = board[row][col];
-		if (!player) return false;
+		if (!player) return null;
 
 		for (const dir of directions) {
 			let count = 1;
@@ -248,11 +387,10 @@ export class ConnectFourGame {
 			}
 
 			if (count >= 4) {
-				if (board === this.board) this.winningCells = winningPath;
-				return true;
+				return winningPath;
 			}
 		}
-		return false;
+		return null;
 	}
 
 	private checkWinOnly(row: number, col: number, board: Cell[][]) {
